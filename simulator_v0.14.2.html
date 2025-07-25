@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>抽卡模拟器（升级版）</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 10px; background: #f7f7f7; }
+  h1 { text-align: center; }
+  input, select, button, textarea { font-size: 14px; }
+  #cardPreview table { border-collapse: collapse; width: 100%; max-height: 180px; overflow-y: auto; display: block; }
+  #cardPreview th, #cardPreview td { border: 1px solid #ccc; padding: 4px; text-align: center; }
+  .card-table thead { background-color: #eee; position: sticky; top: 0; }
+  .bar-container { margin: 5px 0; }
+  .progress-bar { width: 100%; height: 15px; background-color: #ddd; border-radius: 8px; overflow: hidden; }
+  .progress-fill { height: 100%; background-color: #6a99d4; }
+  #drawLog { white-space: pre-wrap; background: #fff; padding: 8px; border: 1px solid #ccc; height: 200px; overflow-y: auto; font-family: monospace; }
+  #errorMsg { color: red; font-weight: bold; }
+  .inline-block { display: inline-block; vertical-align: middle; margin-right: 10px; }
+  .small-input { width: 50px; }
+  #multiDrawInput input { width: 40px; }
+  button { cursor: pointer; }
+  #controls > div { margin-bottom: 10px; }
+  .set-container { margin-bottom: 15px; }
+  .set-title { font-weight: bold; margin-bottom: 6px; }
+  #duplicateSummary { font-weight: bold; margin-top: 10px; font-size: 16px; color: #333; }
+  #setProgress {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+.card-icon { 
+    width: 28px;
+    height: 28px;
+    display: inline-block;
+    margin: 2px;
+    border-radius: 4px;
+    border: 1px solid #aaa;
+    box-sizing: border-box;
+    cursor: default;
+    position: relative;
+    font-size: 14px;
+    line-height: 28px;
+    text-align: center;
+    user-select: none;
+    color: black; /* 设置文字颜色为黑色 */
+}
+
+.card-icon.obtained-1 { background-color: #ffffff; }
+.card-icon.obtained-2 { background-color: #d8f2e0; }
+.card-icon.obtained-3 { background-color: #cde5f3; }
+.card-icon.obtained-4 { background-color: #e5d7f3; }
+.card-icon.obtained-5 { background-color: #f7f3db; }
+.card-icon.obtained-6 { background-color: #ffd700; }
+
+  .not-obtained { background-color: #999; color: #ccc; filter: grayscale(100%) opacity(25%); border: 1px solid #ccc; } /* 暗灰色 */
+</style>
+</head>
+<body>
+<h1>抽卡模拟器（升级版）</h1>
+
+<div id="controls">
+  <div style="margin-top:10px;">
+    <button onclick="resetDrawResults()">重置抽卡结果</button>
+  </div>
+  <div>
+    <label>导入卡牌数据(CSV格式): </label>
+    <input type="file" id="fileInput" accept=".csv" />
+    <button onclick="downloadTemplate()">下载模板</button>
+  </div>
+  <div>
+    <label>或粘贴卡牌数据(卡名,星级,Set名, 每行一条):</label><br />
+    <textarea id="manualInput" rows="6" style="width: 100%;"></textarea><br/>
+    <button onclick="importFromText()">导入卡牌</button>
+    <button onclick="clearCards()">清空卡牌配置</button>
+    <div id="errorMsg"></div>
+  </div>
+  <hr />
+  <div>
+    <b>星级概率设置(总和需大于0，系统会自动归一化):</b><br />
+    <label>1星 <input class="small-input" id="prob1" type="number" min="0" max="100" step="0.01" value="34.58"></label>
+    <label>2星 <input class="small-input" id="prob2" type="number" min="0" max="100" step="0.01" value="27.30"></label>
+    <label>3星 <input class="small-input" id="prob3" type="number" min="0" max="100" step="0.01" value="18.20"></label>
+    <label>4星 <input class="small-input" id="prob4" type="number" min="0" max="100" step="0.01" value="10.92"></label>
+    <label>5星 <input class="small-input" id="prob5" type="number" min="0" max="100" step="0.01" value="5"></label>
+    <label>6星 <input class="small-input" id="prob6" type="number" min="0" max="100" step="0.01" value="4"></label>
+  </div>
+  <hr />
+  <div>
+    <b>选择卡包类型（单包抽卡）:</b>
+    <select id="packType">
+      <option value="white">白卡包（1星）</option>
+      <option value="green">绿卡包（2星）</option>
+      <option value="blue">蓝卡包（3星）</option>
+      <option value="purple" selected>紫卡包（4星）</option>
+      <option value="black">黑卡包（5星）</option>
+    </select>
+    <label>抽卡次数: <input id="drawCount" class="small-input" type="number" value="1" min="1" max="1000" /></label>
+    <button onclick="singlePackDraw()">批量抽卡</button>
+  </div>
+  <hr />
+  <div>
+    <b>一键多包批量抽卡（指定每种包抽多少个）:</b><br/>
+    <div id="multiDrawInput">
+      白卡包: <input type="number" id="multiWhite" min="0" value="10" class="small-input" />
+      绿卡包: <input type="number" id="multiGreen" min="0" value="10" class="small-input" />
+      蓝卡包: <input type="number" id="multiBlue" min="0" value="12" class="small-input" />
+      紫卡包: <input type="number" id="multiPurple" min="0" value="5" class="small-input" />
+      黑卡包: <input type="number" id="multiBlack" min="0" value="0" class="small-input" />
+      <button onclick="multiPackDraw()">开始多包批量抽卡</button>
+    </div>
+  </div>
+</div>
+
+<hr />
+
+<h3>Set收集进度（图鉴风格）</h3>
+<div id="setProgress" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;"></div>
+
+<div id="duplicateSummary">重复卡总星级数：0</div>
+
+<hr />
+
+<h3>卡牌预览</h3>
+<div id="cardPreview"><i>无卡牌数据</i></div>
+
+<hr />
+
+<h3>抽卡记录</h3>
+<div id="drawLog"></div>
+
+<hr />
+
+<h3>抽卡统计</h3>
+<canvas id="rarityChart" width="600" height="200"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  let cards = [];
+  let drawResults = [];
+  let pityState = { purpleNoNewCount: 0 };
+  const starLevels = ['1', '2', '3', '4', '5', '6'];
+
+  document.getElementById('fileInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      try {
+        const text = evt.target.result;
+        const lines = text.trim().split(/\r?\n/);
+        const data = [];
+        for (let i = 1; i < lines.length; i++) {
+          let parts = lines[i].split(',');
+          if (parts.length < 3) throw new Error('CSV格式错误，至少3列');
+          data.push({ name: parts[0].trim(), rarity: parts[1].trim(), set: parts[2].trim() });
+        }
+        processCardData(data);
+      } catch (e) {
+        document.getElementById('errorMsg').textContent = 'CSV解析错误: ' + e.message;
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  function downloadTemplate() {
+    const csvContent = '卡名,星级,Set名\n示例卡1,3,SetA\n示例卡2,4,SetB\n示例卡3,5,SetC\n示例卡4,2,SetA\n示例卡5,1,SetB\n示例卡6,6,SetC\n';
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '卡牌模板.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function resetDrawResults() {
+    drawResults = [];
+    pityState = { purpleNoNewCount: 0 };
+    document.getElementById('drawLog').textContent = '';
+    updateStats();
+    updateSetProgress();
+    updateDuplicateSummary();
+  }
+
+  function importFromText() {
+    const text = document.getElementById('manualInput').value.trim();
+    if (!text) {
+      document.getElementById('errorMsg').textContent = '请先填写卡牌数据';
+      return;
+    }
+    try {
+      const lines = text.split(/\r?\n/);
+      const data = [];
+      for (let line of lines) {
+        if (!line.trim()) continue;
+        let parts = line.split(',');
+        if (parts.length < 3) throw new Error('每行需要3列：卡名,星级,Set名');
+        data.push({ name: parts[0].trim(), rarity: parts[1].trim(), set: parts[2].trim() });
+      }
+      processCardData(data);
+      document.getElementById('errorMsg').textContent = '';
+    } catch (e) {
+      document.getElementById('errorMsg').textContent = '文本解析错误: ' + e.message;
+    }
+  }
+
+  function clearCards() {
+    cards = [];
+    drawResults = [];
+    pityState = { purpleNoNewCount: 0 };
+    document.getElementById('cardPreview').innerHTML = '<i>无卡牌数据</i>';
+    document.getElementById('drawLog').textContent = '';
+    document.getElementById('setProgress').innerHTML = '';
+    updateStats();
+    updateDuplicateSummary();
+  }
+
+  function processCardData(data) {
+    for (const c of data) {
+      if (!starLevels.includes(c.rarity)) throw new Error(`卡牌【${c.name}】星级不合法`);
+    }
+    cards = data;
+    drawResults = [];
+    pityState = { purpleNoNewCount: 0 };
+    updateCardPreview();
+    updateStats();
+    updateSetProgress();
+    updateDuplicateSummary();
+  }
+
+  function updateCardPreview() {
+    if (cards.length === 0) {
+      document.getElementById('cardPreview').innerHTML = '<i>无卡牌数据</i>';
+      return;
+    }
+    let html = '<table class="card-table"><thead><tr><th>卡名</th><th>星级</th><th>Set名</th></tr></thead><tbody>';
+    for (const c of cards) {
+      html += `<tr><td>${c.name}</td><td>${c.rarity}</td><td>${c.set}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('cardPreview').innerHTML = html;
+  }
+
+  function isNew(card) {
+    return !drawResults.some(c => c.name === card.name);
+  }
+
+  function randomPick(arr) {
+    if (arr.length === 0) return null;
+    const idx = Math.floor(Math.random() * arr.length);
+    return arr[idx];
+  }
+
+  function pickStar(probArray) {
+    const r = Math.random();
+    let sum = 0;
+    for (let i = 0; i < probArray.length; i++) {
+      sum += probArray[i];
+      if (r <= sum) return (i + 1).toString();
+    }
+    return '1';
+  }
+
+  function drawPack(packType, availablePool, probs) {
+    const packSize = packType === 'white' ? 2 : packType === 'green' ? 3 : packType === 'blue' ? 4 : 6;
+    const packCards = [];
+    
+    for (let i = 0; i < packSize; i++) {
+      let card = null;
+      let tries = 0;
+
+      while (tries < 30) {
+        const star = pickStar(probs);
+        const pool = availablePool[star];
+        if (pool.length > 0) {
+          card = randomPick(pool);
+          break;
+        }
+        tries++;
+      }
+
+      if (!card) {
+        for (const s of starLevels) {
+          const pool = availablePool[s];
+          if (pool.length > 0) {
+            card = randomPick(pool);
+            break;
+          }
+        }
+      }
+
+      if (card) {
+        packCards.push(card);  // 允许重复
+      }
+    }
+
+    return packCards;
+  }
+
+  function singlePackDraw() {
+    if (cards.length === 0) {
+      alert('请先导入卡牌数据');
+      return;
+    }
+    const packType = document.getElementById('packType').value;
+    let count = parseInt(document.getElementById('drawCount').value);
+    if (isNaN(count) || count < 1) {
+      alert('抽卡次数须为正整数');
+      return;
+    }
+    const probs = getProbabilities();
+
+    const poolByStar = {};
+    for (const s of starLevels) {
+      poolByStar[s] = cards.filter(c => c.rarity === s);
+    }
+
+    let newDraws = [];
+    for (let i = 0; i < count; i++) {
+      const pack = drawPack(packType, poolByStar, probs);
+      drawResults.push(...pack);
+      newDraws.push(...pack);
+    }
+    showDrawLog(newDraws);
+    updateStats();
+    updateSetProgress();
+    updateDuplicateSummary();
+  }
+
+  function multiPackDraw() {
+    if (cards.length === 0) {
+      alert('请先导入卡牌数据');
+      return;
+    }
+    const counts = {
+      white: parseInt(document.getElementById('multiWhite').value) || 0,
+      green: parseInt(document.getElementById('multiGreen').value) || 0,
+      blue: parseInt(document.getElementById('multiBlue').value) || 0,
+      purple: parseInt(document.getElementById('multiPurple').value) || 0,
+      black: parseInt(document.getElementById('multiBlack').value) || 0
+    };
+    const probs = getProbabilities();
+    const poolByStar = {};
+    for (const s of starLevels) {
+      poolByStar[s] = cards.filter(c => c.rarity === s);
+    }
+    let newDraws = [];
+    for (const packType in counts) {
+      const count = counts[packType];
+      if (count <= 0) continue;
+      for (let i = 0; i < count; i++) {
+        const pack = drawPack(packType, poolByStar, probs);
+        drawResults.push(...pack);
+        newDraws.push(...pack);
+      }
+    }
+    if (newDraws.length === 0) {
+      alert('请至少输入一个包的抽卡数量大于0');
+      return;
+    }
+    showDrawLog(newDraws);
+    updateStats();
+    updateSetProgress();
+    updateDuplicateSummary();
+  }
+
+  function getProbabilities() {
+    const arr = [];
+    let sum = 0;
+    for (let i = 1; i <= 6; i++) {
+      let val = parseFloat(document.getElementById('prob' + i).value);
+      if (isNaN(val) || val < 0) val = 0;
+      arr.push(val);
+      sum += val;
+    }
+    if (sum === 0) return [0, 0, 0.6, 0.3, 0.07, 0.03];
+    return arr.map(v => v / sum);
+  }
+
+  function showDrawLog(newCards) {
+    if (newCards.length === 0) return;
+    const logDiv = document.getElementById('drawLog');
+    let text = '';
+    for (const c of newCards) {
+      const newMark = isNew(c) ? '【New】' : '';
+      text += `⭐${c.rarity} | ${c.name} | ${c.set} ${newMark}\n`;
+    }
+    logDiv.textContent = text + logDiv.textContent;
+  }
+
+  let chart = null;
+  function updateStats() {
+    const counts = {};
+    for (const s of starLevels) counts[s] = 0;
+    for (const c of drawResults) {
+      counts[c.rarity] = (counts[c.rarity] || 0) + 1;
+    }
+    const ctx = document.getElementById('rarityChart').getContext('2d');
+    const data = starLevels.map(s => counts[s]);
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: starLevels.map(s => s + '星'),
+        datasets: [{
+          label: '抽卡数量',
+          data,
+          backgroundColor: ['#bfbfbf', '#8fd19e', '#71b4d4', '#a472d4', '#d48989', '#e5d88b']
+        }]
+      },
+      options: {
+        scales: { y: { beginAtZero: true, precision: 0 } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+function updateSetProgress() {
+    const container = document.getElementById('setProgress');
+    container.innerHTML = '';
+    if (cards.length === 0) return;
+
+    const setMap = {};
+    for (const c of cards) {
+        if (!setMap[c.set]) setMap[c.set] = [];
+        setMap[c.set].push(c);
+    }
+
+    for (const s in setMap) {
+        setMap[s].sort((a, b) => {
+            if (a.rarity !== b.rarity) return parseInt(a.rarity) - parseInt(b.rarity);
+            return a.name.localeCompare(b.name);
+        });
+    }
+
+    for (const s in setMap) {
+        const setDiv = document.createElement('div');
+        setDiv.className = 'set-container';
+        const title = document.createElement('div');
+        title.className = 'set-title';
+        title.textContent = `${s}（${setMap[s].length}张）`;
+        setDiv.appendChild(title);
+
+        for (const c of setMap[s]) {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'card-icon';
+
+            const obtained = drawResults.some(d => d.name === c.name);
+            if (obtained) {
+                cardDiv.classList.add('obtained-' + c.rarity);
+            } else {
+                cardDiv.classList.add('not-obtained');
+            }
+
+            cardDiv.textContent = c.rarity;  // 显示星级数字
+            cardDiv.setAttribute('data-tooltip', `${c.name} 星级:${c.rarity}`);
+            setDiv.appendChild(cardDiv);
+        }
+        container.appendChild(setDiv);
+    }
+}
+
+  function updateDuplicateSummary() {
+    if (drawResults.length === 0) {
+      document.getElementById('duplicateSummary').textContent = '重复卡总星级数：0';
+      return;
+    }
+    const countMap = {};
+    for (const c of drawResults) {
+      countMap[c.name] = (countMap[c.name] || 0) + 1;
+    }
+    let totalStars = 0;
+    for (const c of cards) {
+      const count = countMap[c.name] || 0;
+      if (count > 1) {
+        totalStars += (count - 1) * parseInt(c.rarity);
+      }
+    }
+    document.getElementById('duplicateSummary').textContent = `重复卡总星级数：${totalStars}`;
+  }
+
+</script>
+
+</body>
+</html>
