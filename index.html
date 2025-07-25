@@ -43,7 +43,7 @@
     line-height: 28px;
     text-align: center;
     user-select: none;
-    color: black; /* 设置文字颜色为黑色 */
+    color: black;
 }
 
 .card-icon.obtained-1 { background-color: #ffffff; }
@@ -53,7 +53,7 @@
 .card-icon.obtained-5 { background-color: #f7f3db; }
 .card-icon.obtained-6 { background-color: #ffd700; }
 
-  .not-obtained { background-color: #999; color: #ccc; filter: grayscale(100%) opacity(25%); border: 1px solid #ccc; } /* 暗灰色 */
+  .not-obtained { background-color: #999; color: #ccc; filter: grayscale(100%) opacity(25%); border: 1px solid #ccc; }
 </style>
 </head>
 <body>
@@ -89,11 +89,11 @@
   <div>
     <b>选择卡包类型（单包抽卡）:</b>
     <select id="packType">
-      <option value="white">白卡包（1星）</option>
-      <option value="green">绿卡包（2星）</option>
-      <option value="blue">蓝卡包（3星）</option>
-      <option value="purple" selected>紫卡包（4星）</option>
-      <option value="black">黑卡包（5星）</option>
+      <option value="white">白卡包（2张）</option>
+      <option value="green">绿卡包（3张）</option>
+      <option value="blue">蓝卡包（4张）</option>
+      <option value="purple" selected>紫卡包（6张）</option>
+      <option value="black">黑卡包（6张）</option>
     </select>
     <label>抽卡次数: <input id="drawCount" class="small-input" type="number" value="1" min="1" max="1000" /></label>
     <button onclick="singlePackDraw()">批量抽卡</button>
@@ -138,7 +138,7 @@
 <script>
   let cards = [];
   let drawResults = [];
-  let pityState = { purpleNoNewCount: 0 };
+  let pityCounter = { purplePackageCount: 0, purpleMissedCount: 0, blackPackageCount: 0 };
   const starLevels = ['1', '2', '3', '4', '5', '6'];
 
   document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -175,7 +175,7 @@
 
   function resetDrawResults() {
     drawResults = [];
-    pityState = { purpleNoNewCount: 0 };
+    pityCounter = { purplePackageCount: 0, purpleMissedCount: 0, blackPackageCount: 0 };
     document.getElementById('drawLog').textContent = '';
     updateStats();
     updateSetProgress();
@@ -207,7 +207,7 @@
   function clearCards() {
     cards = [];
     drawResults = [];
-    pityState = { purpleNoNewCount: 0 };
+    pityCounter = { purplePackageCount: 0, purpleMissedCount: 0, blackPackageCount: 0 };
     document.getElementById('cardPreview').innerHTML = '<i>无卡牌数据</i>';
     document.getElementById('drawLog').textContent = '';
     document.getElementById('setProgress').innerHTML = '';
@@ -221,7 +221,7 @@
     }
     cards = data;
     drawResults = [];
-    pityState = { purpleNoNewCount: 0 };
+    pityCounter = { purplePackageCount: 0, purpleMissedCount: 0, blackPackageCount: 0 };
     updateCardPreview();
     updateStats();
     updateSetProgress();
@@ -262,17 +262,38 @@
   }
 
   function drawPack(packType, availablePool, probs) {
-    const packSize = packType === 'white' ? 2 : packType === 'green' ? 3 : packType === 'blue' ? 4 : 6;
+    const packSize = (packType === 'white') ? 2
+                    : (packType === 'green') ? 3
+                    : (packType === 'blue') ? 4
+                    : 6;
     const packCards = [];
-    
-    for (let i = 0; i < packSize; i++) {
+    let hasStar3plus = false;
+
+    if (packType === "purple") {
+      pityCounter.purplePackageCount++;
+      const purplePityBoost = Math.min(0.33 * (pityCounter.purpleMissedCount - 2), 1);
+      const isGuaranteedNewCard = Math.random() < purplePityBoost;
+      if (isGuaranteedNewCard) {
+        const missingCard = getMissingCard({'3': availablePool['3'], '4': availablePool['4'], '5': availablePool['5']});
+        if (missingCard) {
+          packCards.push(missingCard);
+          pityCounter.purpleMissedCount = 0;
+          if (missingCard.rarity >= 3) {
+            hasStar3plus = true;
+          }
+        }
+      } else {
+        pityCounter.purpleMissedCount++;
+      }
+    }
+
+    for (let i = packCards.length; i < packSize; i++) {
       let card = null;
       let tries = 0;
-
       while (tries < 30) {
         const star = pickStar(probs);
         const pool = availablePool[star];
-        if (pool.length > 0) {
+        if (pool && pool.length > 0) {
           card = randomPick(pool);
           break;
         }
@@ -282,7 +303,7 @@
       if (!card) {
         for (const s of starLevels) {
           const pool = availablePool[s];
-          if (pool.length > 0) {
+          if (pool && pool.length > 0) {
             card = randomPick(pool);
             break;
           }
@@ -290,11 +311,72 @@
       }
 
       if (card) {
-        packCards.push(card);  // 允许重复
+        packCards.push(card);
+        if (!hasStar3plus && card.rarity >= 3) {
+          hasStar3plus = true;
+        }
+      }
+    }
+
+    if (packType === "purple" && !hasStar3plus) {
+      ensureHighStar(packCards, availablePool);
+    }
+
+    if (packType === "black") {
+      ensureHighStar(packCards, availablePool);
+      const missing6StarCard = getMissingCard({'6': availablePool['6']});
+      const almostCompleteSetCard = getAlmostCompleteSetCard();
+      if (missing6StarCard) {
+        packCards[0] = missing6StarCard;
+      } else if (almostCompleteSetCard) {
+        packCards[0] = almostCompleteSetCard;
       }
     }
 
     return packCards;
+  }
+
+  function ensureHighStar(pack, availablePool) {
+    const highStarPool = [].concat(
+      availablePool['3'] || [],
+      availablePool['4'] || [],
+      availablePool['5'] || [],
+      availablePool['6'] || []
+    );
+    if (highStarPool.length > 0) {
+      pack[0] = randomPick(highStarPool);
+    }
+  }
+
+  function getMissingCard(availablePools) {
+    const missingPool = Object.values(availablePools).reduce((acc, pool) => {
+      const missing = pool.filter(isNew);
+      return acc.concat(missing);
+    }, []);
+    return missingPool.length > 0 ? randomPick(missingPool) : null;
+  }
+
+  function getAlmostCompleteSetCard() {
+    const setCounts = {};
+    for (const c of cards) {
+      if (!setCounts[c.set]) setCounts[c.set] = { total: 0, obtained: 0 };
+      setCounts[c.set].total++;
+      if (!isNew(c)) setCounts[c.set].obtained++;
+    }
+
+    let targetSet = null;
+    for (const setName in setCounts) {
+      const set = setCounts[setName];
+      if (set.total - set.obtained === 1) {
+        targetSet = setName;
+        break;
+      }
+    }
+
+    if (targetSet) {
+      return cards.find(c => c.set === targetSet && isNew(c));
+    }
+    return null;
   }
 
   function singlePackDraw() {
@@ -452,7 +534,7 @@ function updateSetProgress() {
                 cardDiv.classList.add('not-obtained');
             }
 
-            cardDiv.textContent = c.rarity;  // 显示星级数字
+            cardDiv.textContent = c.rarity;
             cardDiv.setAttribute('data-tooltip', `${c.name} 星级:${c.rarity}`);
             setDiv.appendChild(cardDiv);
         }
